@@ -92,7 +92,7 @@ class SimpleMPE(MultiAgentEnv):
             }
         else:
             assert (
-                len(observation_spaces.keys()) == _num_agents
+                len(observation_spaces.keys()) == num_agents
             ), f"Number of observation spaces {len(observation_spaces.keys())} does not match number of agents {_num_agents}"
             self.observation_spaces = observation_spaces
 
