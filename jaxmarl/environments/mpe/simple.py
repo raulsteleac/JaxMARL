@@ -24,6 +24,7 @@ class State:
 
     p_pos: chex.Array  # [num_entities, [x, y]]
     p_vel: chex.Array  # [n, [x, y]]
+    p_speed: chex.Array  # [num_agents, ]
     c: chex.Array  # communication state [num_agents, [dim_c]]
     done: chex.Array  # bool [num_agents, ]
     step: int  # current step
@@ -48,21 +49,21 @@ class SimpleMPE(MultiAgentEnv):
         **kwargs,
     ):
         # Agent and entity constants
-        self.num_agents = num_agents
+        self._num_agents = num_agents
         self.num_landmarks = num_landmarks
         self.num_entities = num_agents + num_landmarks
-        self.agent_range = jnp.arange(num_agents)
+        self._agent_range = jnp.arange(num_agents)
         self.entity_range = jnp.arange(self.num_entities)
 
         # Setting, and sense checking, entity names and agent action spaces
         if agents is None:
-            self.agents = [f"agent_{i}" for i in range(num_agents)]
+            self._agents = [f"agent_{i}" for i in range(_num_agents)]
         else:
             assert (
                 len(agents) == num_agents
             ), f"Number of agents {len(agents)} does not match number of agents {num_agents}"
-            self.agents = agents
-        self.a_to_i = {a: i for i, a in enumerate(self.agents)}
+            self._agents = agents
+        self.a_to_i = {a: i for i, a in enumerate(self._agents)}
         self.classes = self.create_agent_classes()
 
         if landmarks is None:
@@ -72,33 +73,33 @@ class SimpleMPE(MultiAgentEnv):
                 len(landmarks) == num_landmarks
             ), f"Number of landmarks {len(landmarks)} does not match number of landmarks {num_landmarks}"
             self.landmarks = landmarks
-        self.l_to_i = {l: i + self.num_agents for i, l in enumerate(self.landmarks)}
+        self.l_to_i = {l: i + self._num_agents for i, l in enumerate(self.landmarks)}
 
         if action_spaces is None:
             if action_type == DISCRETE_ACT:
-                self.action_spaces = {i: Discrete(5) for i in self.agents}
+                self.action_spaces = {i: Discrete(5) for i in self._agents}
             elif action_type == CONTINUOUS_ACT:
-                self.action_spaces = {i: Box(0.0, 1.0, (5,)) for i in self.agents}
+                self.action_spaces = {i: Box(0.0, 1.0, (5,)) for i in self._agents}
         else:
             assert (
-                len(action_spaces.keys()) == num_agents
-            ), f"Number of action spaces {len(action_spaces.keys())} does not match number of agents {num_agents}"
+                len(action_spaces.keys()) == _num_agents
+            ), f"Number of action spaces {len(action_spaces.keys())} does not match number of agents {_num_agents}"
             self.action_spaces = action_spaces
 
         if observation_spaces is None:
             self.observation_spaces = {
-                i: Box(-jnp.inf, jnp.inf, (4,)) for i in self.agents
+                i: Box(-jnp.inf, jnp.inf, (4,)) for i in self._agents
             }
         else:
             assert (
-                len(observation_spaces.keys()) == num_agents
-            ), f"Number of observation spaces {len(observation_spaces.keys())} does not match number of agents {num_agents}"
+                len(observation_spaces.keys()) == _num_agents
+            ), f"Number of observation spaces {len(observation_spaces.keys())} does not match number of agents {_num_agents}"
             self.observation_spaces = observation_spaces
 
         self.colour = (
             colour
             if colour is not None
-            else [AGENT_COLOUR] * num_agents + [OBS_COLOUR] * num_landmarks
+            else [AGENT_COLOUR] * _num_agents + [OBS_COLOUR] * num_landmarks
         )
 
         # Action type
@@ -124,7 +125,7 @@ class SimpleMPE(MultiAgentEnv):
             assert jnp.all(self.rad > 0), f"Rad array must be positive, got {self.rad}"
         else:
             self.rad = jnp.concatenate(
-                [jnp.full((self.num_agents), 0.15), jnp.full((self.num_landmarks), 0.2)]
+                [jnp.full((self._num_agents), 0.15), jnp.full((self.num_landmarks), 0.2)]
             )
 
         if "moveable" in kwargs:
@@ -138,7 +139,7 @@ class SimpleMPE(MultiAgentEnv):
         else:
             self.moveable = jnp.concatenate(
                 [
-                    jnp.full((self.num_agents), True),
+                    jnp.full((self._num_agents), True),
                     jnp.full((self.num_landmarks), False),
                 ]
             )
@@ -146,10 +147,10 @@ class SimpleMPE(MultiAgentEnv):
         if "silent" in kwargs:
             self.silent = kwargs["silent"]
             assert (
-                len(self.silent) == self.num_agents
-            ), f"Silent array length {len(self.silent)} does not match number of agents {self.num_agents}"
+                len(self.silent) == self._num_agents
+            ), f"Silent array length {len(self.silent)} does not match number of agents {self._num_agents}"
         else:
-            self.silent = jnp.full((self.num_agents), 1)
+            self.silent = jnp.full((self._num_agents), 1)
 
         if "collide" in kwargs:
             self.collide = kwargs["collide"]
@@ -173,13 +174,13 @@ class SimpleMPE(MultiAgentEnv):
         if "accel" in kwargs:
             self.accel = kwargs["accel"]
             assert (
-                len(self.accel) == self.num_agents
-            ), f"Accel array length {len(self.accel)} does not match number of agents {self.num_agents}"
+                len(self.accel) == self._num_agents
+            ), f"Accel array length {len(self.accel)} does not match number of agents {self._num_agents}"
             assert jnp.all(
                 self.accel > 0
             ), f"Accel array must be positive, got {self.accel}"
         else:
-            self.accel = jnp.full((self.num_agents), 5.0)
+            self.accel = jnp.full((self._num_agents), 5.0)
 
         if "max_speed" in kwargs:
             self.max_speed = kwargs["max_speed"]
@@ -188,24 +189,24 @@ class SimpleMPE(MultiAgentEnv):
             ), f"Max speed array length {len(self.max_speed)} does not match number of entities {self.num_entities}"
         else:
             self.max_speed = jnp.concatenate(
-                [jnp.full((self.num_agents), -1), jnp.full((self.num_landmarks), 0.0)]
+                [jnp.full((self._num_agents), -1), jnp.full((self.num_landmarks), 0.0)]
             )
 
         if "u_noise" in kwargs:
             self.u_noise = kwargs["u_noise"]
             assert (
-                len(self.u_noise) == self.num_agents
-            ), f"U noise array length {len(self.u_noise)} does not match number of agents {self.num_agents}"
+                len(self.u_noise) == self._num_agents
+            ), f"U noise array length {len(self.u_noise)} does not match number of agents {self._num_agents}"
         else:
-            self.u_noise = jnp.full((self.num_agents), 0)
+            self.u_noise = jnp.full((self._num_agents), 0)
 
         if "c_noise" in kwargs:
             self.c_noise = kwargs["c_noise"]
             assert (
-                len(self.c_noise) == self.num_agents
-            ), f"C noise array length {len(self.c_noise)} does not match number of agents {self.num_agents}"
+                len(self.c_noise) == self._num_agents
+            ), f"C noise array length {len(self.c_noise)} does not match number of agents {self._num_agents}"
         else:
-            self.c_noise = jnp.full((self.num_agents), 0)
+            self.c_noise = jnp.full((self._num_agents), 0)
 
         if "damping" in kwargs:
             self.damping = kwargs["damping"]
@@ -225,6 +226,18 @@ class SimpleMPE(MultiAgentEnv):
         else:
             self.contact_margin = CONTACT_MARGIN
 
+    @property
+    def agents(self):
+        return self._agents
+
+    @property
+    def agent_range(self):
+        return self._agent_range
+
+    @property
+    def num_agents(self):
+        return self._num_agents
+
     @partial(jax.jit, static_argnums=[0])
     def step_env(self, key: chex.PRNGKey, state: State, actions: dict):
         u, c = self.set_actions(actions)
@@ -232,15 +245,15 @@ class SimpleMPE(MultiAgentEnv):
             c.shape[1] < self.dim_c
         ):  # This is due to the MPE code carrying around 0s for the communication channels
             c = jnp.concatenate(
-                [c, jnp.zeros((self.num_agents, self.dim_c - c.shape[1]))], axis=1
+                [c, jnp.zeros((self._num_agents, self.dim_c - c.shape[1]))], axis=1
             )
 
         key, key_w = jax.random.split(key)
         p_pos, p_vel = self._world_step(key_w, state, u)
 
-        key_c = jax.random.split(key, self.num_agents)
+        key_c = jax.random.split(key, self._num_agents)
         c = self._apply_comm_action(key_c, c, self.c_noise, self.silent)
-        done = jnp.full((self.num_agents), state.step >= self.max_steps)
+        done = jnp.full((self._num_agents), state.step >= self.max_steps)
 
         state = state.replace(
             p_pos=p_pos,
@@ -256,7 +269,7 @@ class SimpleMPE(MultiAgentEnv):
 
         info = {}
 
-        dones = {a: done[i] for i, a in enumerate(self.agents)}
+        dones = {a: done[i] for i, a in enumerate(self._agents)}
         dones.update({"__all__": jnp.all(done)})
 
         return obs, state, reward, dones, info
@@ -265,12 +278,12 @@ class SimpleMPE(MultiAgentEnv):
     def reset(self, key: chex.PRNGKey) -> Tuple[chex.Array, State]:
         """Initialise with random positions"""
 
-        key_a, key_l = jax.random.split(key)
+        key_a, key_l, key_m = jax.random.split(key, 3)
 
         p_pos = jnp.concatenate(
             [
                 jax.random.uniform(
-                    key_a, (self.num_agents, 2), minval=-1.0, maxval=+1.0
+                    key_a, (self._num_agents, 2), minval=-1.0, maxval=+1.0
                 ),
                 jax.random.uniform(
                     key_l, (self.num_landmarks, 2), minval=-1.0, maxval=+1.0
@@ -281,11 +294,11 @@ class SimpleMPE(MultiAgentEnv):
         state = State(
             p_pos=p_pos,
             p_vel=jnp.zeros((self.num_entities, self.dim_p)),
-            c=jnp.zeros((self.num_agents, self.dim_c)),
-            done=jnp.full((self.num_agents), False),
+            p_speed=self.max_speed,
+            c=jnp.zeros((self._num_agents, self.dim_c)),
+            done=jnp.full((self.num_agents), False), # Dones is based on active
             step=0,
         )
-
         return self.get_obs(state), state
 
     @partial(jax.jit, static_argnums=[0])
@@ -295,14 +308,14 @@ class SimpleMPE(MultiAgentEnv):
         @partial(jax.vmap, in_axes=[0, None])
         def _observation(aidx: int, state: State) -> jnp.ndarray:
             """Return observation for agent i."""
-            landmark_rel_pos = state.p_pos[self.num_agents :] - state.p_pos[aidx]
+            landmark_rel_pos = state.p_pos[self._num_agents :] - state.p_pos[aidx]
 
             return jnp.concatenate(
                 [state.p_vel[aidx].flatten(), landmark_rel_pos.flatten()]
             )
 
-        obs = _observation(self.agent_range, state)
-        return {a: obs[i] for i, a in enumerate(self.agents)}
+        obs = _observation(self._agent_range, state)
+        return {a: obs[i] for i, a in enumerate(self._agents)}
 
     def rewards(self, state: State) -> Dict[str, float]:
         """Assign rewards for all agents"""
@@ -310,20 +323,20 @@ class SimpleMPE(MultiAgentEnv):
         @partial(jax.vmap, in_axes=[0, None])
         def _reward(aidx: int, state: State):
             return -1 * jnp.sum(
-                jnp.square(state.p_pos[aidx] - state.p_pos[self.num_agents :])
+                jnp.square(state.p_pos[aidx] - state.p_pos[self._num_agents :])
             )
 
-        r = _reward(self.agent_range, state)
-        return {agent: r[i] for i, agent in enumerate(self.agents)}
+        r = _reward(self._agent_range, state)
+        return {agent: r[i] for i, agent in enumerate(self._agents)}
 
     def set_actions(self, actions: Dict):
         """Extract u and c actions for all agents from actions Dict."""
 
-        actions = jnp.array([actions[i] for i in self.agents]).reshape(
-            (self.num_agents, -1)
+        actions = jnp.array([actions[i] for i in self._agents]).reshape(
+            (self._num_agents, -1)
         )
 
-        return self.action_decoder(self.agent_range, actions)
+        return self.action_decoder(self._agent_range, actions)
 
     @partial(jax.vmap, in_axes=[None, 0, 0])
     def _decode_continuous_action(
@@ -346,12 +359,12 @@ class SimpleMPE(MultiAgentEnv):
         return u, jnp.zeros((self.dim_c,))
 
     def _world_step(self, key: chex.PRNGKey, state: State, u: chex.Array):
-        p_force = jnp.zeros((self.num_agents, 2))
+        p_force = jnp.zeros((self._num_agents, 2))
 
         # apply agent physical controls
-        key_noise = jax.random.split(key, self.num_agents)
+        key_noise = jax.random.split(key, self._num_agents)
         p_force = self._apply_action_force(
-            key_noise, p_force, u, self.u_noise, self.moveable[: self.num_agents]
+            key_noise, p_force, u, self.u_noise, self.moveable[: self._num_agents]
         )
         # jax.debug.print('jax p_force post agent {p_force}', p_force=p_force)
 
@@ -363,7 +376,7 @@ class SimpleMPE(MultiAgentEnv):
 
         # integrate physical state
         p_pos, p_vel = self._integrate_state(
-            p_force, state.p_pos, state.p_vel, self.mass, self.moveable, self.max_speed
+            p_force, state.p_pos, state.p_vel, self.mass, self.moveable, state.p_speed
         )
 
         return p_pos, p_vel
@@ -469,7 +482,7 @@ class SimpleMPE(MultiAgentEnv):
             }
         else:
             return {
-                "agents": self.agents,
+                "agents": self._agents,
             }
 
     def agent_classes(self) -> Dict[str, list]:
@@ -496,16 +509,16 @@ class SimpleMPE(MultiAgentEnv):
 if __name__ == "__main__":
     from jaxmarl.environments.mpe import MPEVisualizer
 
-    num_agents = 3
+    _num_agents = 3
     key = jax.random.PRNGKey(0)
 
-    env = SimpleMPE(num_agents)
+    env = SimpleMPE(_num_agents)
 
     obs, state = env.reset(key)
 
     mock_action = jnp.array([[1.0, 1.0, 0.1, 0.1, 0.0]])
 
-    actions = jnp.repeat(mock_action[None], repeats=num_agents, axis=0).squeeze()
+    actions = jnp.repeat(mock_action[None], repeats=_num_agents, axis=0).squeeze()
 
     actions = {agent: mock_action for agent in env.agents}
     a = env.agents
@@ -523,7 +536,7 @@ if __name__ == "__main__":
     for _ in range(25):
         state_seq.append(state)
         key, key_act = jax.random.split(key)
-        key_act = jax.random.split(key_act, env.num_agents)
+        key_act = jax.random.split(key_act, env._num_agents)
         actions = {
             agent: env.action_space(agent).sample(key_act[i])
             for i, agent in enumerate(env.agents)

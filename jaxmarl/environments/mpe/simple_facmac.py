@@ -6,6 +6,7 @@ from functools import partial
 from jaxmarl.environments.mpe.simple import State, SimpleMPE
 from jaxmarl.environments.spaces import Box
 from jaxmarl.environments.mpe.default_params import *
+from collections.abc import Iterable
 
 
 SimpleFacmacMPE3a = lambda: SimpleFacmacMPE(num_good_agents=1, num_adversaries=3, num_landmarks=2,
@@ -15,21 +16,38 @@ SimpleFacmacMPE6a = lambda: SimpleFacmacMPE(num_good_agents=2, num_adversaries=6
 SimpleFacmacMPE9a = lambda: SimpleFacmacMPE(num_good_agents=3, num_adversaries=9, num_landmarks=6,
                             view_radius=1.5, score_function="min")
 
+DEFAULT_SPEED_PREDATORS = 1.0
+DEFAULT_SPEED_PREY = 1.0
+
 class SimpleFacmacMPE(SimpleMPE):
     def __init__(
         self,
-        num_good_agents=1,
+        num_good_agents=3,
         num_adversaries=3,
-        num_landmarks=2,
+        num_landmarks=0,
         view_radius=1.5,  # set -1 to deactivate
-        score_function="sum"
+        action_type=DISCRETE_ACT,
+        prey_acceleration=10.0,
+        predator_acceleration=10.0,
+        prey_speed_multipliers=[1.0],
+        predator_speed_multipliers=[1.0],
+        prey_response_threshold=2,
+        prey_escape_bound=2,
+        score_function="min"
     ):
         dim_c = 2  # NOTE follows code rather than docs
-        action_type = CONTINUOUS_ACT
+        self.action_type = action_type
         view_radius = view_radius if view_radius != -1 else 999999
 
         num_agents = num_good_agents + num_adversaries
         num_entities = num_agents + num_landmarks
+
+        insure_iterable = lambda x: x if isinstance(x, Iterable) else [x]
+        self.prey_speed_multipliers = jnp.array(insure_iterable(prey_speed_multipliers))
+        self.predator_speed_multipliers = jnp.array(insure_iterable(predator_speed_multipliers))
+
+        self.prey_response_threshold = prey_response_threshold if prey_response_threshold != -1 else 999999
+        self.prey_escape_bound = prey_escape_bound if prey_escape_bound != -1 else 999999
 
         self.num_good_agents, self.num_adversaries = num_good_agents, num_adversaries
 
@@ -55,17 +73,18 @@ class SimpleFacmacMPE(SimpleMPE):
         )
         accel = jnp.concatenate(
             [
-                jnp.full((self.num_adversaries), 3.0),
-                jnp.full((self.num_good_agents), 4.0),
+                jnp.full((self.num_adversaries), predator_acceleration),
+                jnp.full((self.num_good_agents), prey_acceleration),
             ]
         )
         max_speed = jnp.concatenate(
             [
-                jnp.full((self.num_adversaries), 1.0),
-                jnp.full((self.num_good_agents), 1.3),
+                jnp.full((self.num_adversaries), DEFAULT_SPEED_PREDATORS),
+                jnp.full((self.num_good_agents), DEFAULT_SPEED_PREY),
                 jnp.full((num_landmarks), 0.0),
             ]
         )
+
         collide = jnp.full((num_entities,), True)
 
         super().__init__(
@@ -97,6 +116,18 @@ class SimpleFacmacMPE(SimpleMPE):
         )
 
         self.score_function = score_function
+
+    @property
+    def agents(self):
+        return self.adversaries
+
+    @property
+    def agent_range(self):
+        return jnp.arange(self.num_adversaries)
+
+    @property
+    def num_agents(self):
+        return self.num_adversaries
 
     def rewards(self, state: State) -> Dict[str, float]:
         @partial(jax.vmap, in_axes=(0, None))
@@ -132,17 +163,22 @@ class SimpleFacmacMPE(SimpleMPE):
 
     def _prey_policy(self, key: chex.PRNGKey, state: State, aidx: int):
         action = None
-        n = 100  # number of positions sampled
-        # sample actions randomly from a target circle
-        # length = jnp.sqrt(jnp.random.uniform(0, 1, n))
-        # angle = jnp.pi * jnp.random.uniform(0, 2, n)
+        if self.action_type == CONTINUOUS_ACT:
+            n = 100  # number of positions sampled
+            # sample actions randomly from a target circle
+            # length = jnp.sqrt(jnp.random.uniform(0, 1, n))
+            # angle = jnp.pi * jnp.random.uniform(0, 2, n)
 
-        key, _key = jax.random.split(key)
-        length = jnp.sqrt(jax.random.uniform(_key, (n,), minval=0., maxval=1.))
-        key, _key = jax.random.split(key)
-        angle = jnp.pi * jnp.sqrt(jax.random.uniform(_key, (n,), minval=0., maxval=2.))
-        x = length * jnp.cos(angle)
-        y = length * jnp.sin(angle)
+            key, _key = jax.random.split(key)
+            length = jnp.sqrt(jax.random.uniform(_key, (n,), minval=0., maxval=1.))
+            key, _key = jax.random.split(key)
+            angle = jnp.pi * jnp.sqrt(jax.random.uniform(_key, (n,), minval=0., maxval=2.))
+            x = length * jnp.cos(angle)
+            y = length * jnp.sin(angle)
+        else:
+            n = 5
+            x = jnp.array([0, 0, 0, 1, -1], dtype=jnp.float32)
+            y = jnp.array([0, 1, -1, 0, 0], dtype=jnp.float32)
 
         # evaluate score for each position
         # check whether positions are reachable
@@ -163,12 +199,14 @@ class SimpleFacmacMPE(SimpleMPE):
                     scores += dist[:, :self.num_adversaries].sum(axis=1)
         elif self.score_function == "min":
             proj_pos = jnp.vstack((x, y)).transpose() + state.p_pos[aidx]
-            rel_dis = jnp.sqrt(jnp.sum(jnp.square(state.p_pos[aidx] - state.p_pos[:self.num_adversaries])))
+            rel_dis = jnp.sqrt(jnp.sum(jnp.square(state.p_pos[aidx] - state.p_pos[:self.num_adversaries]), axis=1))
             min_dist_adv_idx = jnp.argmin(rel_dis)
             delta_pos = state.p_pos[:self.num_adversaries][None, :, :] - proj_pos[:, None, :]
             dist = jnp.sqrt(jnp.sum(jnp.square(delta_pos), axis=2))
             dist_min = self.rad[:self.num_adversaries] + self.rad[aidx]
-            scores = jnp.where((dist < dist_min[None]).sum(axis=1), scores, -9999999)
+            scores = jnp.where((dist < dist_min[None]).sum(axis=1), -9999999, scores)
+            proj_dist_from_center = jnp.sqrt(jnp.sum(jnp.square(proj_pos), axis=1))
+            scores = jnp.where((proj_dist_from_center > self.prey_escape_bound), -9999999, scores)
             scores += dist[:, min_dist_adv_idx]
         else:
             raise Exception("Unknown score function {}".format(self.score_function))
@@ -176,27 +214,38 @@ class SimpleFacmacMPE(SimpleMPE):
         best_idx = jnp.argmax(scores)
         chosen_action = jnp.array([x[best_idx], y[best_idx]], dtype=jnp.float32)
         chosen_action = jax.lax.cond(scores[best_idx] < 0, lambda: chosen_action*0.0, lambda: chosen_action)
+        chosen_action = jax.lax.cond(scores[best_idx] > self.prey_response_threshold, lambda: chosen_action*0.0, lambda: chosen_action)
+        chosen_action = chosen_action * self.accel[aidx] * self.moveable[aidx]
         return chosen_action
+
+    def prey_collision_data(self, state:State):
+        def _collisions_prey(_, agent_idx):
+            prey_collisions =  jax.vmap(self.is_collision, in_axes=(None, 0, None))(self.num_good_agents + agent_idx, self.agent_range, state).sum()
+            return _, prey_collisions
+        _, collision_data = jax.lax.scan(_collisions_prey, {}, jnp.arange(self.num_good_agents))
+        return collision_data
 
     @partial(jax.jit, static_argnums=[0])
     def step_env(self, key: chex.PRNGKey, state: State, actions: dict):
+        prey_action_mock = jnp.zeros_like(actions[self.adversaries[0]])
+        actions.update({prey: prey_action_mock for prey in self.good_agents})
         u, c = self.set_actions(actions)
         # we throw away num_good_agents now, as num_agents does not differentiate between active and passive agents
-        u = u[:-self.num_good_agents]
+        u = u[:self.num_adversaries]
         for i in range(self.num_good_agents):
-            prey_action = self._prey_policy(key, state, u.shape[0]-1+i)
+            prey_action = self._prey_policy(key, state, self.num_adversaries+i)
             u = jnp.concatenate([u, prey_action[None]], axis=0)
         if (
             c.shape[1] < self.dim_c
         ):  # This is due to the MPE code carrying around 0s for the communication channels, and due to added prey
             c = jnp.concatenate(
-                [c, jnp.zeros((self.num_agents, self.dim_c - c.shape[1]))], axis=1
+                [c, jnp.zeros((self._num_agents, self.dim_c - c.shape[1]))], axis=1
             )
 
         key, key_w = jax.random.split(key)
         p_pos, p_vel = self._world_step(key_w, state, u)
 
-        key_c = jax.random.split(key, self.num_agents)
+        key_c = jax.random.split(key, self._num_agents)
         c = self._apply_comm_action(key_c, c, self.c_noise, self.silent)
         done = jnp.full((self.num_agents), state.step >= self.max_steps)
 
@@ -212,11 +261,47 @@ class SimpleFacmacMPE(SimpleMPE):
         obs = self.get_obs(state)
 
         info = {}
-
+        info.update({"colision_data": self.prey_collision_data(state)})
         dones = {a: done[i] for i, a in enumerate(self.agents)}
         dones.update({"__all__": jnp.all(done)})
 
         return obs, state, reward, dones, info
+
+    @partial(jax.jit, static_argnums=[0])
+    def reset(self, key: chex.PRNGKey) -> Tuple[chex.Array, State]:
+        """Initialise with random positions"""
+
+        key_a, key_l, key_prs, key_py = jax.random.split(key, 4)
+
+        p_pos = jnp.concatenate(
+            [
+                jax.random.uniform(
+                    key_a, (self._num_agents, 2), minval=-1.0, maxval=+1.0
+                ),
+                jax.random.uniform(
+                    key_l, (self.num_landmarks, 2), minval=-1.0, maxval=+1.0
+                ),
+            ]
+        )
+
+        sampled_speed_prey = jax.random.choice(key_py, self.prey_speed_multipliers) * DEFAULT_SPEED_PREY
+        sampled_speed_predator = jax.random.choice(key_prs, self.predator_speed_multipliers) * DEFAULT_SPEED_PREDATORS
+
+        state = State(
+            p_pos=p_pos,
+            p_vel=jnp.zeros((self.num_entities, self.dim_p)),
+            p_speed=jnp.concatenate(
+                [
+                    jnp.full((self.num_adversaries), sampled_speed_predator),
+                    jnp.full((self.num_good_agents), sampled_speed_prey),
+                    jnp.zeros((self.num_landmarks)),
+                ]
+            ),
+            c=jnp.zeros((self._num_agents, self.dim_c)),
+            done=jnp.full((self.num_agents), False), # Dones is based on active
+            step=0,
+        )
+        return self.get_obs(state), state
 
     def get_obs(self, state: State) -> Dict[str, chex.Array]:
         @partial(jax.vmap, in_axes=(0))
@@ -224,19 +309,19 @@ class SimpleFacmacMPE(SimpleMPE):
             """Values needed in all observations"""
 
             landmark_pos = (
-                    state.p_pos[self.num_agents:] - state.p_pos[aidx]
+                    state.p_pos[self._num_agents:] - state.p_pos[aidx]
             )  # Landmark positions in agent reference frame
 
             # Zero out unseen agents with other_mask
-            other_pos = state.p_pos[: self.num_agents] - state.p_pos[aidx]
-            other_vel = state.p_vel[: self.num_agents]
+            other_pos = state.p_pos[: self._num_agents] - state.p_pos[aidx]
+            other_vel = state.p_vel[: self._num_agents]
 
             # use jnp.roll to remove ego agent from other_pos and other_vel arrays
-            other_pos = jnp.roll(other_pos, shift=self.num_agents - aidx - 1, axis=0)[
-                        : self.num_agents - 1
+            other_pos = jnp.roll(other_pos, shift=self._num_agents - aidx - 1, axis=0)[
+                        : self._num_agents - 1
                         ]
-            other_vel = jnp.roll(other_vel, shift=self.num_agents - aidx - 1, axis=0)[
-                        : self.num_agents - 1
+            other_vel = jnp.roll(other_vel, shift=self._num_agents - aidx - 1, axis=0)[
+                        : self._num_agents - 1
                         ]
 
             other_pos = jnp.roll(other_pos, shift=aidx, axis=0)
@@ -277,9 +362,6 @@ class SimpleFacmacMPE(SimpleMPE):
             )
 
         obs = {a: _adversary(i) for i, a in enumerate(self.adversaries)}
-        obs.update(
-            {a: _good(i + self.num_adversaries) for i, a in enumerate(self.good_agents)}
-        )
         return obs
 
     def get_world_state(self, state: State):
