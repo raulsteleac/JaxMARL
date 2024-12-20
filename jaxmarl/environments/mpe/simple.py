@@ -4,19 +4,20 @@ Base class for MPE PettingZoo envs.
 TODO: viz for communication env, e.g. crypto
 """
 
+from functools import partial
+from typing import Dict, Optional, Tuple
+
+import chex
 import jax
 import jax.numpy as jnp
-import numpy as onp
-from jaxmarl.environments.multi_agent_env import MultiAgentEnv
-from jaxmarl.environments.mpe.default_params import *
-import chex
-from jaxmarl.environments.spaces import Box, Discrete
-from flax import struct
-from typing import Tuple, Optional, Dict
-from functools import partial
-
-import matplotlib.pyplot as plt
 import matplotlib
+import matplotlib.pyplot as plt
+import numpy as onp
+from flax import struct
+from jaxmarl.environments.mpe.default_params import *
+from jaxmarl.environments.multi_agent_env import MultiAgentEnv
+from jaxmarl.environments.spaces import Box, Discrete
+
 
 @struct.dataclass
 class State:
@@ -28,7 +29,9 @@ class State:
     c: chex.Array  # communication state [num_agents, [dim_c]]
     done: chex.Array  # bool [num_agents, ]
     step: int  # current step
-    goal: int = None  # index of target landmark, used in: SimpleSpeakerListenerMPE, SimpleReferenceMPE, SimplePushMPE, SimpleAdversaryMPE
+    goal: int = (
+        None  # index of target landmark, used in: SimpleSpeakerListenerMPE, SimpleReferenceMPE, SimplePushMPE, SimpleAdversaryMPE
+    )
 
 
 class SimpleMPE(MultiAgentEnv):
@@ -125,7 +128,10 @@ class SimpleMPE(MultiAgentEnv):
             assert jnp.all(self.rad > 0), f"Rad array must be positive, got {self.rad}"
         else:
             self.rad = jnp.concatenate(
-                [jnp.full((self._num_agents), 0.15), jnp.full((self.num_landmarks), 0.2)]
+                [
+                    jnp.full((self._num_agents), 0.15),
+                    jnp.full((self.num_landmarks), 0.2),
+                ]
             )
 
         if "moveable" in kwargs:
@@ -238,6 +244,10 @@ class SimpleMPE(MultiAgentEnv):
     def num_agents(self):
         return self._num_agents
 
+    @property
+    def environment_specific_reset(self):
+        return {}
+
     @partial(jax.jit, static_argnums=[0])
     def step_env(self, key: chex.PRNGKey, state: State, actions: dict):
         u, c = self.set_actions(actions)
@@ -296,7 +306,7 @@ class SimpleMPE(MultiAgentEnv):
             p_vel=jnp.zeros((self.num_entities, self.dim_p)),
             p_speed=self.max_speed,
             c=jnp.zeros((self._num_agents, self.dim_c)),
-            done=jnp.full((self.num_agents), False), # Dones is based on active
+            done=jnp.full((self.num_agents), False),  # Dones is based on active
             step=0,
         )
         return self.get_obs(state), state
@@ -503,7 +513,7 @@ class SimpleMPE(MultiAgentEnv):
         m = x < 1.0
         mr = (x - 0.9) * 10
         br = jnp.min(jnp.array([jnp.exp(2 * x - 2), 10]))
-        return jax.lax.select(m, mr, br) * ~w   
+        return jax.lax.select(m, mr, br) * ~w
 
 
 if __name__ == "__main__":

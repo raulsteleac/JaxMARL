@@ -7,12 +7,12 @@ from jaxmarl import make
 from jaxmarl.environments.mpe import MPEVisualizer
 
 # Parameters + random keys
-max_steps = 25
+max_steps = 300
 key = jax.random.PRNGKey(0)
 key, key_r, key_a = jax.random.split(key, 3)
 
 # Instantiate environment
-env = make('MPE_simple_reference_v3')
+env = make('MPE_simple_facmac_v1')
 obs, state = env.reset(key_r)
 print('list of agents in environment', env.agents)
 
@@ -28,7 +28,9 @@ for _ in range(max_steps):
     # Iterate random keys and sample actions
     key, key_s, key_a = jax.random.split(key, 3)
     key_a = jax.random.split(key_a, env.num_agents)
-    actions = {agent: env.action_space(agent).sample(key_a[i]) for i, agent in enumerate(env.agents)}
+    random_actions = jax.random.randint(key_a[0], minval=0, maxval=5, shape=(env.num_agents,))
+    actions = {agent: random_actions[i] for i, agent in enumerate(env.agents)}
+    # actions = {agent: env.action_space(agent).sample(key_a[i]) for i, agent in enumerate(env.agents)}
 
     # Step environment
     obs, state, rewards, dones, infos = env.step(key_s, state, actions)
