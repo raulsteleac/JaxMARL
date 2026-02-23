@@ -1,4 +1,4 @@
-""" 
+"""
 Abstract base class for multi agent gym environments with JAX
 Based on the Gymnax and PettingZoo APIs
 """
@@ -13,6 +13,7 @@ from typing import Tuple, Optional
 
 from jaxmarl.environments.spaces import Space
 
+
 @struct.dataclass
 class State:
     done: chex.Array
@@ -25,6 +26,7 @@ class MultiAgentEnv(object):
     def __init__(
         self,
         num_agents: int,
+        reset_any_death: bool = False,
     ) -> None:
         """
         Args:
@@ -33,6 +35,7 @@ class MultiAgentEnv(object):
         self.num_agents = num_agents
         self.observation_spaces = dict()
         self.action_spaces = dict()
+        self.reset_any_death = reset_any_death
 
     @partial(jax.jit, static_argnums=(0,))
     def reset(self, key: chex.PRNGKey) -> Tuple[Dict[str, chex.Array], State]:
@@ -54,6 +57,7 @@ class MultiAgentEnv(object):
         state: State,
         actions: Dict[str, chex.Array],
         reset_state: Optional[State] = None,
+        **kwargs,
     ) -> Tuple[Dict[str, chex.Array], State, Dict[str, float], Dict[str, bool], Dict]:
         """Performs step transitions in the environment. Resets the environment if done.
         To control the reset state, pass `reset_state`. Otherwise, the environment will reset using `self.reset`.
@@ -73,7 +77,7 @@ class MultiAgentEnv(object):
         """
 
         key, key_reset = jax.random.split(key)
-        obs_st, states_st, rewards, dones, infos = self.step_env(key, state, actions)
+        obs_st, states_st, rewards, dones, infos = self.step_env(key, state, actions, **kwargs)
 
         if reset_state is None:
             obs_re, states_re = self.reset(key_reset)
@@ -81,17 +85,18 @@ class MultiAgentEnv(object):
             states_re = reset_state
             obs_re = self.get_obs(states_re)
 
+        ep_done = dones["__all__"]
+        if self.reset_any_death:
+            ep_done = jnp.any(jnp.array(list(dones.values())))
+            dones = {agent: ep_done for agent in dones.keys()}
+
         # Auto-reset environment based on termination
-        states = jax.tree.map(
-            lambda x, y: jax.lax.select(dones["__all__"], x, y), states_re, states_st
-        )
-        obs = jax.tree.map(
-            lambda x, y: jax.lax.select(dones["__all__"], x, y), obs_re, obs_st
-        )
+        states = jax.tree.map(lambda x, y: jax.lax.select(ep_done, x, y), states_re, states_st)
+        obs = jax.tree.map(lambda x, y: jax.lax.select(ep_done, x, y), obs_re, obs_st)
         return obs, states, rewards, dones, infos
 
     def step_env(
-        self, key: chex.PRNGKey, state: State, actions: Dict[str, chex.Array]
+        self, key: chex.PRNGKey, state: State, actions: Dict[str, chex.Array], **kwargs
     ) -> Tuple[Dict[str, chex.Array], State, Dict[str, float], Dict[str, bool], Dict]:
         """Environment-specific step transition.
         

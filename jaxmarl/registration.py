@@ -26,11 +26,11 @@ from .environments import (
     InTheMatrix,
     Hanabi,
     Overcooked,
+    OvercookedOptions,
     OvercookedV2,
     CoinGame,
     JaxNav,
 )
-
 
 
 def make(env_id: str, **env_kwargs):
@@ -98,7 +98,7 @@ def make(env_id: str, **env_kwargs):
         env = InTheGrid_2p(**env_kwargs)
     elif env_id == "storm_np":
         env = InTheMatrix(**env_kwargs)
-    
+
     # 6. Hanabi
     elif env_id == "hanabi":
         env = Hanabi(**env_kwargs)
@@ -106,18 +106,21 @@ def make(env_id: str, **env_kwargs):
     # 7. Overcooked
     elif env_id == "overcooked":
         env = Overcooked(**env_kwargs)
+    elif env_id == "overcooked_options":
+        env = OvercookedOptions(**env_kwargs)
     elif env_id == "overcooked_v2":
         env = OvercookedV2(**env_kwargs)
 
     # 8. Coin Game
     elif env_id == "coin_game":
         env = CoinGame(**env_kwargs)
-        
+
     # 9. JaxNav
     elif env_id == "jaxnav":
         env = JaxNav(**env_kwargs)
 
     return env
+
 
 registered_envs = [
     "MPE_simple_v3",
@@ -147,6 +150,7 @@ registered_envs = [
     "storm_np",
     "hanabi",
     "overcooked",
+    "overcooked_options",
     "overcooked_v2",
     "coin_game",
     "jaxnav",
