@@ -506,7 +506,7 @@ class Overcooked(MultiAgentEnv):
 
         reward = alice_reward + bob_reward
 
-        successful_delivery = alice_shaped_reward + bob_shaped_reward
+        successful_delivery = allice_delivery + bob_delivery
 
         return (
             state.replace(
