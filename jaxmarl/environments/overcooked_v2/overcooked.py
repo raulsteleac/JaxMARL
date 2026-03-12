@@ -1,28 +1,27 @@
 from collections import OrderedDict
 from enum import Enum
 from functools import partial
-from typing import List, Optional, Union
-import numpy as np
+from typing import Dict, List, Optional, Tuple, Union
+
+import chex
 import jax
 import jax.numpy as jnp
-from jax import lax
-from jaxmarl.environments import MultiAgentEnv
-from jaxmarl.environments import spaces
-from typing import Tuple, Dict
-import chex
+import numpy as np
 from flax import struct
 from flax.core.frozen_dict import FrozenDict
+from jax import lax
+from jaxmarl.environments import MultiAgentEnv, spaces
 from jaxmarl.environments.overcooked_v2.common import (
     ACTION_TO_DIRECTION,
     MAX_INGREDIENTS,
     Actions,
-    StaticObject,
-    DynamicObject,
-    Direction,
-    Position,
     Agent,
+    Direction,
+    DynamicObject,
+    Position,
+    StaticObject,
 )
-from jaxmarl.environments.overcooked_v2.layouts import overcooked_v2_layouts, Layout
+from jaxmarl.environments.overcooked_v2.layouts import Layout, overcooked_v2_layouts
 from jaxmarl.environments.overcooked_v2.settings import (
     DELIVERY_REWARD,
     INDICATOR_ACTIVATION_COST,
@@ -32,11 +31,11 @@ from jaxmarl.environments.overcooked_v2.settings import (
 )
 from jaxmarl.environments.overcooked_v2.utils import (
     OvercookedPathPlanner,
+    compute_enclosed_spaces,
     compute_view_box,
     get_closest_true_pos_no_directions,
     mark_adjacent_cells,
     tree_select,
-    compute_enclosed_spaces,
 )
 
 
@@ -207,7 +206,8 @@ class OvercookedV2(MultiAgentEnv):
             lax.stop_gradient(state),
             rewards,
             dones,
-            {"shaped_reward": shaped_rewards},
+            {"shaped_reward": shaped_rewards,
+             "successful_delivery": state.new_correct_delivery},
         )
 
     @partial(jax.jit, static_argnums=(0,))

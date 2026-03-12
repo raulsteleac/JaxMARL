@@ -1,8 +1,9 @@
-from jaxmarl.environments.overcooked_v2.common import StaticObject
-import numpy as np
-from typing import List, Tuple, Optional
-from dataclasses import dataclass
 import itertools
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+import numpy as np
+from jaxmarl.environments.overcooked_v2.common import StaticObject
 
 # Layouts from Overcooked-AI
 cramped_room = """
@@ -48,6 +49,14 @@ WWPWW
 W   R
 WBWXW
 """
+counter_circuit_v2 = """
+WWWPPWWW
+W A    W
+B WWWW X
+W     AW
+RW0011WW
+"""
+
 asymm_advantages_recipes_center = """
 WWWWWWWWW
 0 WXR01 X
@@ -356,6 +365,7 @@ overcooked_v2_layouts = {
     ),
     # Adapted layouts
     "cramped_room_v2": Layout.from_string(cramped_room_v2),
+    "counter_circuit_v2": Layout.from_string(counter_circuit_v2, possible_recipes=[[0, 0, 0], [1, 1, 1]]),
     "asymm_advantages_recipes_center": Layout.from_string(
         asymm_advantages_recipes_center
     ),
